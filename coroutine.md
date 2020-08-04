@@ -290,5 +290,87 @@ fun main() = runBlocking {
 }
 
 // The answer is 3
-// The answer is 2017 ms
+// The answer is 1017 ms
+```
+
+
+
+
+
+---
+
+# Lazy async evaluation
+
+```kotlin
+fun main() = runBlocking {
+    val time = measureTimeMillis {
+        val one = async(start = CoroutineStart.LAZY) { doSomethingUsefulOne() }
+        val two = async (start = CoroutineStart.LAZY) { doSomethingUsefulTwo() }
+        // some computation
+        one.start() // start the first one
+        two.start() // start the second one
+
+        println("The answer is ${one.await() + two.await()}")
+    }
+
+    println("Completed in $time ms")
+}
+
+// The answer is 3
+// The answer is 1017 ms
+```
+
+
+
+
+---
+
+# Lazy async evaluation
+
+```kotlin
+fun main() = runBlocking {
+    val time = measureTimeMillis {
+        val one = async(start = CoroutineStart.LAZY) { doSomethingUsefulOne() }
+        val two = async (start = CoroutineStart.LAZY) { doSomethingUsefulTwo() }
+        // some computation
+        one.start() // start the first one
+        two.start() // start the second one
+
+        println("The answer is ${one.await() + two.await()}")
+    }
+
+    println("Completed in $time ms")
+}
+
+// The answer is 3
+// The answer is 1017 ms
+```
+
+
+
+
+
+---
+
+# Async-style functions
+
+GlobalScope은 coroutine에서 권장하지 않는 문법입니다. ...OneAsync() 함수에서 exception이 날 경우 try catch로 exception handling은 할 수 있지만 비동기 job은 유지된채 남습니다.
+
+```kotlin
+fun somethingUsefulOneAsync() = GlobalScope.async { doSomethingUsefulOne() }
+
+fun somethingUsefulTwoAsync() = GlobalScope.async { doSomethingUsefulTwo() }
+
+fun main() {
+    val time = measureTimeMillis {
+        val one = doSomethingUsefulOneAsync()
+        val two = doSomethingUsefulTwoAsync()
+
+        runBlocking {
+            println("The answer is ${one.await() + two.await()}")
+        }
+    }
+
+    println("Completed in $time ms")
+}
 ```
