@@ -325,40 +325,14 @@ fun main() = runBlocking {
 
 ---
 
-# Lazy async evaluation
-
-```kotlin
-fun main() = runBlocking {
-    val time = measureTimeMillis {
-        val one = async(start = CoroutineStart.LAZY) { doSomethingUsefulOne() }
-        val two = async (start = CoroutineStart.LAZY) { doSomethingUsefulTwo() }
-        // some computation
-        one.start() // start the first one
-        two.start() // start the second one
-
-        println("The answer is ${one.await() + two.await()}")
-    }
-
-    println("Completed in $time ms")
-}
-
-// The answer is 3
-// The answer is 1017 ms
-```
-
-
-
-
-
----
-
 # Async-style functions
 
-GlobalScope은 coroutine에서 권장하지 않는 문법입니다. ...OneAsync() 함수에서 exception이 날 경우 try catch로 exception handling은 할 수 있지만 비동기 job은 유지된채 남습니다.
+GlobalScope은 coroutine에서 권장하지 않는 문법입니다. ...OneAsync() 함수에서 exception이 날 경우 try catch로 exception handling은 할 수 있지만 비동기 job은 유지된채 남습니다. 
+
+coroutine은 javascript의 async 함수와는 다르게 실행하는 곳에서 async 여부를 결정합니다.
 
 ```kotlin
 fun somethingUsefulOneAsync() = GlobalScope.async { doSomethingUsefulOne() }
-
 fun somethingUsefulTwoAsync() = GlobalScope.async { doSomethingUsefulTwo() }
 
 fun main() {
@@ -381,9 +355,183 @@ fun main() {
 
 
 
+
+---
+
+# Coroutine Examples(with thread blocking code)
+
+
+
+
+
+
+---
+
+# Coroutine Additional Concepts
+
+**CoroutineScope**
+- 코루틴의 범위, 코루틴 블록을 묶음으로 제어할 수 있는 단위 
+- 예제로 봤던 GlobalScope(async 예제)도 CoroutineScope의 한 종류이다. 이 경우에는 프로그램 전반에 걸쳐 백그라운드로 동작하는 scope을 가진다
+
+**CoroutineContext**
+- Coroutine을 어떻게 처리할 것인지에 대한 여러가지 정보의 집합
+- 주요 요소로는 Job과 Dispatcher가 있다. Job은 하나하나의 코루틴 블록을 의미한다.
+
+
+
+---
+
+# Coroutine Additional Concepts
+
+**Dispatcher**
+- CoroutineContext 의 주요 요소. Thread를 어떻게 관리할지 정의하는 곳이다
+- 파라미터 없이 launch를 사용한다면 부모 CoroutineScope의 context와 dispatcher를 그대로 상속받음
+
+```kotlin
+fun main() = runBlocking {
+    // main runBlocking : main
+    launch { println("main : ${Thread.currentThread().name}") }
+
+    // Unconfined : main
+    launch(Dispatchers.Unconfined) { println("Unconfined : ${Thread.currentThread().name}") }
+    
+    // Default : DefaultDispatcher-worker-1 -> GlobalScope에서 launch 한 것과 동일
+    launch(Dispatchers.Default) { println("Default : ${Thread.currentThread().name}") }
+
+    // newSingleThreadContext : MyOwnThread
+    launch(newSingleThreadContext("MyOwnThread")) {
+        println("newSingleThreadContext : ${Thread.currentThread().name}") 
+    }
+}
+```
+
+
+
+
+
+---
+
+# Asynchronous code with thread blocking call
+
+```kotlin
+class UserRepository {
+    fun findById(id: Long): User? {
+        Thread.sleep(1_000) // thread blocking code
+        return User(id = id, name = UUID.randomUUID().toString())
+    }
+}
+```
+
+---
+
+# Asynchronous code with thread blocking call
+
+```kotlin
+class UserService(
+    private val userRepository: UserRepository
+) {
+    fun findUsersSync() {
+        val time = measureTimeMillis {
+            val firstUser = userRepository.findById(1L)
+            val secondUser = userRepository.findById(2L)
+            println("$firstUser, $secondUser")
+        }
+
+        // 2010ms
+        println("time = ${time}ms)
+    }
+}
+```
+
+---
+
+# Asynchronous code with thread blocking call
+
+```kotlin
+class UserService(
+    private val userRepository: UserRepository
+) {
+    suspend fun findUsersAsyncInWrongWay() {
+        val time = measureTimeMillis {
+            val firstUser = async { userRepository.findById(1L) }
+            val secondUser = async { userRepository.findById(2L) }
+            println("${firstUser.await()}, ${secondUser.await()}")
+        }
+
+        // 2009ms
+        println("time = ${time}ms)
+    }
+}
+```
+
+
+
+
+
+
+---
+
+# Asynchronous code with thread blocking call
+
+```kotlin
+class UserService(
+    private val userRepository: UserRepository
+) {
+    suspend fun findUsersAsyncInCorrectWay() {
+        val time = measureTimeMillis {
+            val firstUser = async(Dispatchers.IO) { userRepository.findById(1L) }
+            val secondUser = async(Dispatchers.IO) { userRepository.findById(2L) }
+            println("${firstUser.await()}, ${secondUser.await()}")
+        }
+
+        // 1010ms
+        // 다른 쓰레드에서 코드가 실행되기에 병렬적으로 동작을 하긴 했지만, 
+        // IO dispatcher가 JDBC blocking call들로 병목을 잡고 있을 수 있다.
+        // 따라서 이런 경우에는 DB에 접근하는 call들만 따로 관리하는 Dispatcher를 만들어야 한다.
+        println("time = ${time}ms)
+    }
+}
+```
+
+
+
+
+
+
+---
+
+# Asynchronous code with thread blocking call
+
+```kotlin
+package co.lopun.coroutines
+
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.reactor.asCoroutineDispatcher
+import java.util.concurrent.Executors
+// Scheduler == Dispatcher in Reactor(Webflux)
+import reactor.core.scheduler.Schedulers
+
+
+// 필요에 따라서 Dispatcher들을 프로젝트별로 나눠도 되고 IO, COMPUTE 외의 다른 Dispatcher를 만들어도 된다.
+enum class Dispatchers(val dispatcher: CoroutineDispatcher) {
+  DB_SCHEDULER(Schedulers.newBoundedElastic(100, 100_000, "DB").asCoroutineDispatcher()),
+  DB_THREAD_POOL(Executors.newFixedThreadPool(threads).asCoroutineDispatcher()),
+  COMPUTE(Schedulers.parallel().asCoroutineDispatcher())
+}
+
+fun main() = runBlocking {
+    async(Dispatchers.DB_SCHEDULER.dispatcher) { /* blocking call */ }
+    async(Dispatchers.DB_THREAD_POOL.dispatcher) { /* blocking call */ }
+}
+```
+
+
+
 ---
 
 # References
 - [coroutine 강좌 시리즈(1~5)](https://tourspace.tistory.com/150?category=797357)
 - [coroutine 개념 익히기](https://wooooooak.github.io/kotlin/2019/08/25/%EC%BD%94%ED%8B%80%EB%A6%B0-%EC%BD%94%EB%A3%A8%ED%8B%B4-%EA%B0%9C%EB%85%90-%EC%9D%B5%ED%9E%88%EA%B8%B0/)
+- [KotlinConf 2017 - Introduction to Coroutines](https://www.youtube.com/watch?v=_hfBv0a09Jc)
+- [KotlinConf 2017 - Deep Dive into Coroutines on JVM](https://www.youtube.com/watch?v=YrrUCSi72E8)
 - [marp - markdown ppt slide generator](https://marp.app/)
